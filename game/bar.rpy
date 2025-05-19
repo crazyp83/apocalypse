@@ -3638,7 +3638,7 @@ if d3fightroll == 3:
         ma "...slams her off violently on her neck and back! Ouch!"
         play sound "Sounds/crunch.mp3"
         $ renpy.pause(.5, hard=True)
-        show spinecrush:
+        show spinecrush
         show spinecrush:
             xalign 0.4
             yalign 0.6       

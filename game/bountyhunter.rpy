@@ -97,11 +97,11 @@ with dissolve
 bh "When the ravens start croaking, this is the cue...."
 window hide
 play music "Sounds/duel.mp3"
-show duelmczoom at duelmc:
+show duelmczoom at duelmc
 pause 4
 mc "I'm ready."    
 window hide
-show duelbhzoom at duelbounty:
+show duelbhzoom at duelbounty
 pause 4
 bh "You'd better be..."    
 scene duel01 with dissolve
