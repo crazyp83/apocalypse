@@ -3,7 +3,7 @@ name: Build Ren'Py iOS App
 on: push
 
 jobs:
-  setup_build:
+  build:
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -41,7 +41,7 @@ jobs:
         run: |
           curl -o renpyweb.zip https://www.renpy.org/dl/7.8.7/renpy-7.8.7-web.zip
           unzip renpyweb.zip -d renpy/renpy-7.8.7-sdk
-  build:
+
       - name: Build for iOS
         run: |
           cd renpy/renpy-7.8.7-sdk
@@ -78,7 +78,7 @@ jobs:
             cat build.log
             exit 1
           fi
-  debug_build:
+
       - name: Debug build settings and locate .app bundle
         run: |
           cd "$GITHUB_WORKSPACE/ios"
@@ -114,7 +114,7 @@ jobs:
             ls -la "$BUILT_PRODUCTS_DIR" || echo "Directory not found"
             exit 1
           fi
-  build_ipa:
+
       - name: Create IPA from unsigned app bundle
         run: |
           IPA_NAME="${PRODUCT_NAME}-${VERSION}.ipa"
@@ -127,7 +127,7 @@ jobs:
 
       - name: Install Dropbox SDK
         run: pip install dropbox
-  upload_dropbox:
+
       - name: Upload IPA to Dropbox and Get Shareable Link
         env:
           DROPBOX_ACCESS_TOKEN: ${{ secrets.DROPBOX_ACCESS_TOKEN }}
