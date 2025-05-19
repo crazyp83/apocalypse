@@ -54,7 +54,7 @@ jobs:
           ./renpy.sh launcher ios_create "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/ios"
           ./renpy.sh launcher ios_populate "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/ios"
       - name: Upload iOS directory
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ios-directory
           path: ${{ github.workspace }}/ios
@@ -111,7 +111,7 @@ jobs:
           echo "::set-output name=version::$VERSION"
           echo "::set-output name=bundle_id::$BUNDLE_ID"
       - name: Upload .app bundle
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: app-bundle
           path: ${{ steps.get_build_settings.outputs.app_path }}
@@ -137,7 +137,7 @@ jobs:
           zip -r "$IPA_NAME" Payload/
           echo "::set-output name=ipa_name::$IPA_NAME"
       - name: Upload IPA
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ipa-file
           path: ${{ github.workspace }}/temp/${{ steps.create_ipa.outputs.ipa_name }}
