@@ -3,12 +3,11 @@ name: Build Ren'Py iOS App
 on: push
 
 jobs:
-  setup_build:
+  setup_renpy_sdk:
     runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-
       - name: Cache Ren'Py SDK
         id: cache-renpy
         uses: actions/cache@v3
@@ -17,130 +16,156 @@ jobs:
           key: renpy-7.8.7-${{ runner.os }}
           restore-keys: |
             renpy-7.8.7-
-
       - name: Download Ren'Py SDK
         if: steps.cache-renpy.outputs.cache-hit != 'true'
         run: |
           curl -o renpy-sdk.zip https://www.renpy.org/dl/7.8.7/renpy-7.8.7-sdk.zip
           unzip renpy-sdk.zip -d renpy
-
       - name: Download and install rapt
         if: steps.cache-renpy.outputs.cache-hit != 'true'
         run: |
           curl -o rapt.zip https://www.renpy.org/dl/7.8.7/renpy-7.8.7-rapt.zip
           unzip rapt.zip -d renpy/renpy-7.8.7-sdk
-
       - name: Download and install renios
         if: steps.cache-renpy.outputs.cache-hit != 'true'
         run: |
           curl -o renios.zip https://www.renpy.org/dl/7.8.7/renpy-7.8.7-renios.zip
           unzip renios.zip -d renpy/renpy-7.8.7-sdk
-
       - name: Download and install renpyweb
         if: steps.cache-renpy.outputs.cache-hit != 'true'
         run: |
           curl -o renpyweb.zip https://www.renpy.org/dl/7.8.7/renpy-7.8.7-web.zip
           unzip renpyweb.zip -d renpy/renpy-7.8.7-sdk
-  build:
-      - name: Build for iOS
+
+  create_ios_directory:
+    needs: setup_renpy_sdk
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Restore Ren'Py SDK cache
+        uses: actions/cache@v3
+        with:
+          path: renpy
+          key: renpy-7.8.7-${{ runner.os }}
+      - name: Create and populate iOS directory
         run: |
           cd renpy/renpy-7.8.7-sdk
           ./renpy.sh launcher ios_create "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/ios"
           ./renpy.sh launcher ios_populate "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/ios"
-          echo "Contents of $GITHUB_WORKSPACE/ios:"
-          ls -la "$GITHUB_WORKSPACE/ios"
-      - name: Check if iOS directory exists
-        run: |
-          if [ ! -d "$GITHUB_WORKSPACE/ios" ]; then
-            echo "Error: iOS directory not found at $GITHUB_WORKSPACE/ios"
-            exit 1
-          fi
+      - name: Upload iOS directory
+        uses: actions/upload-artifact@v3
+        with:
+          name: ios-directory
+          path: ${{ github.workspace }}/ios
 
+  build_xcode_project:
+    needs: create_ios_directory
+    runs-on: macos-latest
+    outputs:
+      app_path: ${{ steps.get_build_settings.outputs.app_path }}
+      product_name: ${{ steps.get_build_settings.outputs.product_name }}
+      version: ${{ steps.get_build_settings.outputs.version }}
+      bundle_id: ${{ steps.get_build_settings.outputs.bundle_id }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Download iOS directory
+        uses: actions/download-artifact@v3
+        with:
+          name: ios-directory
+          path: ${{ github.workspace }}/ios
       - name: Find Xcode project
         run: |
-          XCODEPROJ=$(find "$GITHUB_WORKSPACE/ios" -maxdepth 1 -name "*.xcodeproj" | head -n 1)
+          XCODEPROJ=$(find "${{ github.workspace }}/ios" -maxdepth 1 -name "*.xcodeproj" | head -n 1)
           if [ -z "$XCODEPROJ" ]; then
-            echo "Error: No .xcodeproj file found in $GITHUB_WORKSPACE/ios"
+            echo "Error: No .xcodeproj file found in ${{ github.workspace }}/ios"
             exit 1
           fi
           XCODEPROJ_NAME=$(basename "$XCODEPROJ")
           SCHEME_NAME="${XCODEPROJ_NAME%.xcodeproj}"
           echo "XCODEPROJ_PATH=$XCODEPROJ" >> $GITHUB_ENV
           echo "SCHEME_NAME=$SCHEME_NAME" >> $GITHUB_ENV
-          echo "Found Xcode project: $XCODEPROJ_NAME with scheme: $SCHEME_NAME"
-
-      - name: Build Xcode project without signing
+      - name: Build Xcode project
         run: |
-          cd "$GITHUB_WORKSPACE/ios"
+          cd "${{ github.workspace }}/ios"
           xcodebuild -project "${{ env.XCODEPROJ_PATH }}" -scheme "${{ env.SCHEME_NAME }}" -configuration Release -sdk iphoneos CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE="" | tee build.log
           if [ $? -ne 0 ]; then
             echo "Build failed. Check build.log for details."
             cat build.log
             exit 1
           fi
-  debug_build:
-      - name: Debug build settings and locate .app bundle
+      - name: Get build settings
+        id: get_build_settings
         run: |
-          cd "$GITHUB_WORKSPACE/ios"
+          cd "${{ github.workspace }}/ios"
           BUILD_SETTINGS=$(xcodebuild -project "${{ env.XCODEPROJ_PATH }}" -scheme "${{ env.SCHEME_NAME }}" -configuration Release -sdk iphoneos -showBuildSettings)
-          echo "$BUILD_SETTINGS"
           BUILT_PRODUCTS_DIR=$(echo "$BUILD_SETTINGS" | grep -E '^\s*BUILT_PRODUCTS_DIR' | cut -d '=' -f2 | xargs)
           FULL_PRODUCT_NAME=$(echo "$BUILD_SETTINGS" | grep -E '^\s*FULL_PRODUCT_NAME' | cut -d '=' -f2 | xargs)
           PRODUCT_NAME=$(echo "$BUILD_SETTINGS" | grep -E '^\s*PRODUCT_NAME' | cut -d '=' -f2 | xargs)
-          VERSION=$(echo "$BUILD_SETTINGS" | grep -E '^\s*MARKETING_VERSION' | cut -d '=' -f2 | xargs)
-          BUNDLE_ID=$(echo "$BUILD_SETTINGS" | grep -E '^\s*PRODUCT_BUNDLE_IDENTIFIER' | cut -d '=' -f2 | xargs)
+          VERSION=$(echo "$BUILD_SETTINGS" | grep -E '^\s*MARKETING_VERSION' | cut -d '=' -f2 | xargs || echo "unknown")
+          BUNDLE_ID=$(echo "$BUILD_SETTINGS" | grep -E '^\s*PRODUCT_BUNDLE_IDENTIFIER' | cut -d '=' -f2 | xargs || echo "")
           APP_PATH="$BUILT_PRODUCTS_DIR/$FULL_PRODUCT_NAME"
-          echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
-          echo "PRODUCT_NAME=$PRODUCT_NAME" >> $GITHUB_ENV
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "BUNDLE_ID=$BUNDLE_ID" >> $GITHUB_ENV
-          if [ -z "$PRODUCT_NAME" ]; then
-            echo "Error: PRODUCT_NAME not found in build settings"
-            exit 1
-          fi
-          if [ -z "$VERSION" ]; then
-            echo "Warning: MARKETING_VERSION not found, defaulting to 'unknown'"
-            echo "VERSION=unknown" >> $GITHUB_ENV
-          fi
-          if [ -z "$BUNDLE_ID" ]; then
-            echo "Warning: PRODUCT_BUNDLE_IDENTIFIER not found"
-          else
-            echo "Bundle ID: $BUNDLE_ID"
-          fi
-          if [ -d "$APP_PATH" ]; then
-            echo ".app bundle found at $APP_PATH"
-          else
-            echo "Error: .app bundle not found at $APP_PATH"
-            ls -la "$BUILT_PRODUCTS_DIR" || echo "Directory not found"
-            exit 1
-          fi
-  build_ipa:
-      - name: Create IPA from unsigned app bundle
-        run: |
-          IPA_NAME="${PRODUCT_NAME}-${VERSION}.ipa"
-          mkdir -p "$GITHUB_WORKSPACE/temp/Payload"
-          cp -R "$APP_PATH" "$GITHUB_WORKSPACE/temp/Payload/"
-          cd "$GITHUB_WORKSPACE/temp"
-          zip -r "$IPA_NAME" Payload/
-          echo "IPA_PATH=$GITHUB_WORKSPACE/temp/$IPA_NAME" >> $GITHUB_ENV
-          echo "Created IPA: $IPA_NAME"
+          echo "::set-output name=app_path::$APP_PATH"
+          echo "::set-output name=product_name::$PRODUCT_NAME"
+          echo "::set-output name=version::$VERSION"
+          echo "::set-output name=bundle_id::$BUNDLE_ID"
+      - name: Upload .app bundle
+        uses: actions/upload-artifact@v3
+        with:
+          name: app-bundle
+          path: ${{ steps.get_build_settings.outputs.app_path }}
 
+  create_ipa:
+    needs: build_xcode_project
+    runs-on: macos-latest
+    outputs:
+      ipa_name: ${{ steps.create_ipa.outputs.ipa_name }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Download .app bundle
+        uses: actions/download-artifact@v3
+        with:
+          name: app-bundle
+          path: ${{ github.workspace }}/temp/Payload
+      - name: Create IPA
+        id: create_ipa
+        run: |
+          cd ${{ github.workspace }}/temp
+          IPA_NAME="${{ needs.build_xcode_project.outputs.product_name }}-${{ needs.build_xcode_project.outputs.version }}.ipa"
+          zip -r "$IPA_NAME" Payload/
+          echo "::set-output name=ipa_name::$IPA_NAME"
+      - name: Upload IPA
+        uses: actions/upload-artifact@v3
+        with:
+          name: ipa-file
+          path: ${{ github.workspace }}/temp/${{ steps.create_ipa.outputs.ipa_name }}
+
+  upload_to_dropbox:
+    needs: create_ipa
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Download IPA
+        uses: actions/download-artifact@v3
+        with:
+          name: ipa-file
+          path: ${{ github.workspace }}/temp
       - name: Install Dropbox SDK
         run: pip install dropbox
-  upload_dropbox:
       - name: Upload IPA to Dropbox and Get Shareable Link
         env:
           DROPBOX_ACCESS_TOKEN: ${{ secrets.DROPBOX_ACCESS_TOKEN }}
         run: |
-          SHAREABLE_LINK=$(python upload_to_dropbox.py)
+          IPA_FILE="${{ github.workspace }}/temp/${{ needs.create_ipa.outputs.ipa_name }}"
+          SHAREABLE_LINK=$(python upload_to_dropbox.py "$IPA_FILE")
           echo "SHAREABLE_LINK=$SHAREABLE_LINK" >> $GITHUB_ENV
-
       - name: Create GitHub Release with Download Link
         env:
           GITHUB_TOKEN: ${{ secrets.GITEATOKEN }}
-          GH_TOKEN: ${{ secrets.GITEATOKEN }}
         run: |
           gh release create "${{ github.ref_name }}" \
-            --title "${{ env.PRODUCT_NAME }} ${{ env.VERSION }}" \
-            --notes "Automated release\nVersion: ${{ env.VERSION }}\nBundle ID: ${{ env.BUNDLE_ID }}\nDownload IPA from Dropbox: ${{ env.SHAREABLE_LINK }}"
-                                         
+            --title "${{ needs.build_xcode_project.outputs.product_name }} ${{ needs.build_xcode_project.outputs.version }}" \
+            --notes "Automated release\nVersion: ${{ needs.build_xcode_project.outputs.version }}\nBundle ID: ${{ needs.build_xcode_project.outputs.bundle_id }}\nDownload IPA from Dropbox: ${{ env.SHAREABLE_LINK }}"
