@@ -105,4 +105,88 @@ jobs:
           fi
           XCODEPROJ_NAME=$(basename "$XCODEPROJ")
           SCHEME_NAME="${XCODEPROJ_NAME%.xcodeproj}"
-          echo
+          echo "XCODEPROJ_PATH=$XCODEPROJ" >> $GITHUB_ENV
+          echo "SCHEME_NAME=$SCHEME_NAME" >> $GITHUB_ENV
+      - name: Build Xcode project
+        run: |
+          cd "${{ github.workspace }}/ios"
+          xcodebuild -project "${{ env.XCODEPROJ_PATH }}" -scheme "${{ env.SCHEME_NAME }}" -configuration Release -sdk iphoneos CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE="" | tee build.log
+          if [ $? -ne 0 ]; then
+            echo "Build failed. Check build.log for details."
+            cat build.log
+            exit 1
+          fi
+      - name: Get build settings
+        id: get_build_settings
+        run: |
+          cd "${{ github.workspace }}/ios"
+          BUILD_SETTINGS=$(xcodebuild -project "${{ env.XCODEPROJ_PATH }}" -scheme "${{ env.SCHEME_NAME }}" -configuration Release -sdk iphoneos -showBuildSettings)
+          BUILT_PRODUCTS_DIR=$(echo "$BUILD_SETTINGS" | grep -E '^\s*BUILT_PRODUCTS_DIR' | cut -d '=' -f2 | xargs)
+          FULL_PRODUCT_NAME=$(echo "$BUILD_SETTINGS" | grep -E '^\s*FULL_PRODUCT_NAME' | cut -d '=' -f2 | xargs)
+          PRODUCT_NAME=$(echo "$BUILD_SETTINGS" | grep -E '^\s*PRODUCT_NAME' | cut -d '=' -f2 | xargs)
+          VERSION=$(echo "$BUILD_SETTINGS" | grep -E '^\s*MARKETING_VERSION' | cut -d '=' -f2 | xargs || echo "unknown")
+          BUNDLE_ID=$(echo "$BUILD_SETTINGS" | grep -E '^\s*PRODUCT_BUNDLE_IDENTIFIER' | cut -d '=' -f2 | xargs || echo "")
+          APP_PATH="$BUILT_PRODUCTS_DIR/$FULL_PRODUCT_NAME"
+          echo "::set-output name=app_path::$APP_PATH"
+          echo "::set-output name=product_name::$PRODUCT_NAME"
+          echo "::set-output name=version::$VERSION"
+          echo "::set-output name=bundle_id::$BUNDLE_ID"
+      - name: Upload .app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-bundle
+          path: ${{ steps.get_build_settings.outputs.app_path }}
+
+  create_ipa:
+    needs: build_xcode_project
+    runs-on: macos-latest
+    outputs:
+      ipa_name: ${{ steps.create_ipa.outputs.ipa_name }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Download .app bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: app-bundle
+          path: ${{ github.workspace }}/temp/Payload
+      - name: Create IPA
+        id: create_ipa
+        run: |
+          cd ${{ github.workspace }}/temp
+          IPA_NAME="${{ needs.build_xcode_project.outputs.product_name }}-${{ needs.build_xcode_project.outputs.version }}.ipa"
+          zip -r "$IPA_NAME" Payload/
+          echo "::set-output name=ipa_name::$IPA_NAME"
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipa-file
+          path: ${{ github.workspace }}/temp/${{ steps.create_ipa.outputs.ipa_name }}
+
+  upload_to_dropbox:
+    needs: create_ipa
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Download IPA
+        uses: actions/download-artifact@v3
+        with:
+          name: ipa-file
+          path: ${{ github.workspace }}/temp
+      - name: Install Dropbox SDK
+        run: pip install dropbox
+      - name: Upload IPA to Dropbox and Get Shareable Link
+        env:
+          DROPBOX_ACCESS_TOKEN: ${{ secrets.DROPBOX_ACCESS_TOKEN }}
+        run: |
+          IPA_FILE="${{ github.workspace }}/temp/${{ needs.create_ipa.outputs.ipa_name }}"
+          SHAREABLE_LINK=$(python upload_to_dropbox.py "$IPA_FILE")
+          echo "SHAREABLE_LINK=$SHAREABLE_LINK" >> $GITHUB_ENV
+      - name: Create GitHub Release with Download Link
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITEATOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ needs.build_xcode_project.outputs.product_name }} ${{ needs.build_xcode_project.outputs.version }}" \
+            --notes "Automated release\nVersion: ${{ needs.build_xcode_project.outputs.version }}\nBundle ID: ${{ needs.build_xcode_project.outputs.bundle_id }}\nDownload IPA from Dropbox: ${{ env.SHAREABLE_LINK }}"
