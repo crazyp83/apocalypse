@@ -148,10 +148,11 @@ jobs:
           echo "SHAREABLE_LINK=$SHAREABLE_LINK" >> $GITHUB_ENV
 
       - name: Create GitHub Release with Download Link
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITEATOKEN }}
-          GH_TOKEN: ${{ secrets.GITEATOKEN }}
-        run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "${{ env.PRODUCT_NAME }} ${{ env.VERSION }}" \
-            --notes "Automated release\nVersion: ${{ env.VERSION }}\nBundle ID: ${{ env.BUNDLE_ID }}\nDownload IPA from Dropbox: ${{ env.SHAREABLE_LINK }}"
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITEATOKEN }}
+    GH_TOKEN: ${{ secrets.GITEATOKEN }}
+  run: |
+    TAG_NAME="v${{ env.VERSION }}"
+    gh release create "$TAG_NAME" \
+      --title "${{ env.PRODUCT_NAME }} ${{ env.VERSION }}" \
+      --notes "Automated release\nVersion: ${{ env.VERSION }}\nBundle ID: ${{ env.BUNDLE_ID }}\nDownload IPA from Dropbox: ${{ env.SHAREABLE_LINK }}"
